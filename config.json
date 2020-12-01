@@ -1,6 +1,6 @@
 {
 	"epoch":300,
 	"learning_rate":0.001,
-	"batch_size":128,
-	"result_path":"result/"
+	"batch_size":64,
+	"result_base_path":"result/"
 }

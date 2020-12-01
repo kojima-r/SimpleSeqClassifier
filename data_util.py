@@ -6,39 +6,27 @@ import json
 
 
 class SeqDataset(torch.utils.data.Dataset):
-    def __init__(self, data, train=True):
+    def __init__(self, data, train=True, previous_n_step=None, after_n_step=None):
         super(SeqDataset, self).__init__()
         self.data = data
-
+        self.previous_n_step=previous_n_step #None
+        self.after_n_step=after_n_step #None
     def __len__(self):
         return len(self.data)
-
-    """
-    def __getitem__(self, idx):
-        # out_obs, out_input, out_state=None,None,None
-        out_obs=[]
-        out_step=[]
-        d=0
-
-        for i in idx:
-            k,v=self.data[i]
-            obj=np.load("../"+v["mel"][0])
-            s=obj.shape[0]
-            d=obj.shape[1]
-            out_obs.append(obj)
-            out_step.append(s)
-        max_s=np.max(out_step)
-        out=np.zeros((len(out_obs),max_s,d))
-        for i,o in enumerate(out_obs):
-            out[i,:out_step[i],:]=o
-        print(out.shape)
-        return out, out_step
-    """
     def __getitem__(self, idx):
         k,v=self.data[idx]
-        obj=np.load("../"+v["mel"][0])
+        obj=np.load("./"+v["mel"][0])
         y=int(v["label"])
         s=obj.shape[0]
+        if self.previous_n_step is not None:
+            if s-self.previous_n_step>1:
+                obj=obj[:s-self.previous_n_step,:]
+                s=s-self.previous_n_step
+            else:
+                obj=obj
+        if self.after_n_step is not None:
+            obj=obj[:self.after_n_step,:]
+            s=obj.shape[0]
         return obj, s, y
 
 
