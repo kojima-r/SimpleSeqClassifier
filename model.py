@@ -14,7 +14,7 @@ from sklearn.model_selection import KFold
 import matplotlib.pyplot as plt
 
 class SimpleMLP(torch.nn.Module):
-    def __init__(self, in_dim, h_dim, h_lstm_dim, out_dim, att_mode, activation=F.relu, scale=0.1):
+    def __init__(self, in_dim, h_dim, h_lstm_dim, out_dim, att_mode, activation=F.relu, bidirectional=False,num_lstm_layers=1):
         super(SimpleMLP, self).__init__()
         linears=[]
         prev_d=in_dim
@@ -28,8 +28,11 @@ class SimpleMLP(torch.nn.Module):
 
         self.lstm=nn.LSTM(input_size = prev_d,
             hidden_size = h_lstm_dim,
+            bidirectional = bidirectional,
+            num_layers =num_lstm_layers,
             batch_first = True)
-        
+        if bidirectional:
+            h_lstm_dim=h_lstm_dim*2
         self.linear_out=self.get_layer(h_lstm_dim, out_dim)
         self.att_mode=att_mode
         if self.att_mode:
@@ -321,6 +324,7 @@ def get_default_config():
     config["epoch"] = 10
     config["patience"] = 5
     config["batch_size"] = 100
+    config["nn_type"] = "lstm"
     #config["activation"] = "relu"
     #config["optimizer"] = "sgd"
     ##
@@ -345,8 +349,9 @@ def set_file_logger(logger,config,filename):
         h.setLevel(logging.INFO)
         logger.addHandler(h)
 
-def run_prev_all(config,logger,device,enable_train=False):
-    for i in range(10):
+def run_prev_all(config,logger,device,enable_train=False,train_test_mode=False):
+    external_test=False 
+    for i in range(20):
         step=24*7*i
         if enable_train:
             s="prev{:03d}.".format(step)
@@ -354,12 +359,15 @@ def run_prev_all(config,logger,device,enable_train=False):
             s="prev{:03d}.".format(step)
             #s=""
         print(">>>>",s)
-        run_cv_train(config,logger,device,prefix=s,enable_train=enable_train, previous_n_step=step, after_n_step=None)
+        if train_test_mode:
+            run_train_test(config,logger,device,prefix=s,enable_train=enable_train, previous_n_step=step, after_n_step=None)
+        else:
+            run_cv_train(config,logger,device,prefix=s,enable_train=enable_train, previous_n_step=step, after_n_step=None,external_test=external_test)
     ###
 
-def run_after_all(config,logger,device,enable_train=False):
-    #for i in range(10):
-    for i in range(11,25):
+def run_after_all(config,logger,device,enable_train=False,train_test_mode=False):
+    external_test=False 
+    for i in range(25):
         step=24*7*(i+1)
         if enable_train:
             s="after{:04d}.".format(step)
@@ -367,11 +375,132 @@ def run_after_all(config,logger,device,enable_train=False):
             s="after{:04d}.".format(step)
             #s=""
         print(">>>>",s)
-        run_cv_train(config,logger,device,prefix=s,enable_train=enable_train, previous_n_step=None, after_n_step=step)
+        if train_test_mode:
+            run_train_test(config,logger,device,prefix=s,enable_train=enable_train, previous_n_step=None, after_n_step=step)
+        else:
+            run_cv_train(config,logger,device,prefix=s,enable_train=enable_train, previous_n_step=None, after_n_step=step,external_test=external_test)
     ###
 
-def run_cv_train(config,logger,device,prefix="",enable_train=False, previous_n_step=None, after_n_step=None):
+
+def run_train_test(config,logger,device,prefix="",enable_train=False, previous_n_step=None, after_n_step=None):
     att_mode=True
+    enable_train=False
+    
+
+    data=load_dataset(config["data"],config)
+    data=np.array(data)
+    test_data=load_dataset(config["test_data"],config)
+    test_data=np.array(test_data)
+    
+    np.random.seed(1234)
+    
+    ## model
+    result_path=config["result_base_path"]
+    config["result_path"]=result_path+"/"+prefix+"train"
+    os.makedirs(config["result_path"],exist_ok=True)
+    
+    ## 
+    m=len(data)
+    valid_num=int(m*0.2)
+    train_valid_idx=np.arange(m)
+    np.random.shuffle(train_valid_idx)
+    train_idx=train_valid_idx[:m-valid_num]
+    valid_idx=train_valid_idx[m-valid_num:]
+        
+    train_data=data[train_idx]
+    valid_data=data[valid_idx]
+    if config["nn_type"]=="lstm3":
+        model=SimpleMLP(40,[32],32,3,att_mode=att_mode, bidirectional=True,num_lstm_layers=3)
+    elif config["nn_type"]=="lstm2":
+        model=SimpleMLP(40,[32],32,3,att_mode=att_mode, bidirectional=True,num_lstm_layers=2)
+    else:
+        model=SimpleMLP(40,[32],32,3,att_mode=att_mode, bidirectional=False,num_lstm_layers=1)
+
+    clf=SeqClassifier(config, model, device=device, att_mode=att_mode)
+    if enable_train:
+        clf.fit(train_data,valid_data, previous_n_step=previous_n_step, after_n_step=after_n_step)
+
+    # load
+    config["result_path"]=result_path+"/"+prefix+"train"
+    path = config["result_path"]+f"/model/best.checkpoint"
+    print("[LOAD]",path)
+    if not os.path.exists(path):
+        return 
+    clf.load_ckpt(path)
+    #print("===")
+    pred, prob, att = clf.pred(test_data, previous_n_step=previous_n_step, after_n_step=after_n_step)
+
+    y_pred=np.array([int(val) for val in pred])
+    y_true=np.array([int(v["label"]) for k,v in test_data])
+    ## evaluation
+    acc=accuracy_score(y_true,y_pred)
+    n_label=prob.shape[1]
+    aucs=[roc_auc_score(y_true==i,prob[:,i]) for i in range(n_label)]
+    conf_mat={}
+    for yi_true,yi_pred in zip(y_true,y_pred):
+        k=(yi_true,yi_pred)
+        if k not in conf_mat:
+            conf_mat[k]=0
+        conf_mat[k]+=1
+    print("Acc:",acc)
+    print("AUC:",aucs)
+    #print("===")
+    print(conf_mat)
+    
+    fig=plt.figure()
+    plt.plot([0, 1], [0, 1], 'k--')
+    for i in range(n_label):
+        fpr, tpr, thresholds = roc_curve(y_true==i,prob[:,i])
+        plt.plot(fpr, tpr, label=''+str(i))
+    plt.xlabel('False positive rate')
+    plt.ylabel('True positive rate')
+    plt.title('ROC curve')
+    plt.legend(loc='best')
+    path=result_path+"/"+prefix+"roc.png"
+    fig.savefig(path)
+    plt.clf()
+    
+    key_list=[]
+    for k,v in conf_mat.items():
+        key_list.append(k[0])
+        key_list.append(k[1])
+    max_label=max(key_list)
+    ll=[]
+    for i in range(max_label):
+        l=[]
+        for j in range(max_label):
+            k=(i,j)
+            if k in conf_mat:
+                l.append(conf_mat[k])
+            else:
+                l.append(0)
+        ll.append(l)
+    result={}
+    result["conf_mat"]=ll
+    result["auc"]=aucs
+    result["acc"]=acc
+    result_all_data={}
+    for i in range(len(test_data)):
+        pair=test_data[i]
+        result_all_data[pair[0]]=pair[1]
+        result_all_data[pair[0]]["y_pred"]=int(y_pred[i])
+        result_all_data[pair[0]]["y_true"]=int(y_true[i])
+        result_all_data[pair[0]]["y_prob"]=prob[i].tolist()
+        result_all_data[pair[0]]["attention"]=att[i].tolist()
+    result["all"]=result_all_data
+   
+    ###
+    path=result_path+"/"+prefix+"result.json"
+    print("[SAVE]",path)
+    with open(path,"w") as fp:
+        json.dump(result,fp)
+    
+    return result
+ 
+
+def run_cv_train(config,logger,device,prefix="",enable_train=False, previous_n_step=None, after_n_step=None,external_test=False):
+    att_mode=True
+    
 
     data=load_dataset(config["data"],config)
     data=np.array(data)
@@ -402,20 +531,37 @@ def run_cv_train(config,logger,device,prefix="",enable_train=False, previous_n_s
         #print(valid_idx)
         print(test_idx)
         
-        train_data=data[train_idx]
-        valid_data=data[valid_idx]
-        test_data =data[test_idx]
-
-        model=SimpleMLP(40,[32],32,3,att_mode=att_mode)
+        if external_test:
+            train_data=None
+            valid_data=None
+            test_data =data
+        else:
+            train_data=data[train_idx]
+            valid_data=data[valid_idx]
+            test_data =data[test_idx]
+        if config["nn_type"]=="lstm3":
+            model=SimpleMLP(40,[32],32,3,att_mode=att_mode, bidirectional=True,num_lstm_layers=3)
+        elif config["nn_type"]=="lstm2":
+            model=SimpleMLP(40,[32],32,3,att_mode=att_mode, bidirectional=True,num_lstm_layers=2)
+        else:
+            model=SimpleMLP(40,[32],32,3,att_mode=att_mode, bidirectional=False,num_lstm_layers=1)
 
         clf=SeqClassifier(config, model, device=device, att_mode=att_mode)
         if enable_train:
             clf.fit(train_data,valid_data, previous_n_step=previous_n_step, after_n_step=after_n_step)
-        path = config["result_path"]+f"/model/best.checkpoint"
+
+        if external_test:
+            path = config["result_original_path"]+"/"+prefix+"fold"+str(fold)
+            path+=f"/model/best.checkpoint"
+        else:
+            path = config["result_path"]+f"/model/best.checkpoint"
         print("[LOAD]",path)
+        if not os.path.exists(path):
+            return 
         clf.load_ckpt(path)
         #print("===")
         pred, prob, att = clf.pred(test_data, previous_n_step=previous_n_step, after_n_step=after_n_step)
+
         y_pred=np.array([int(val) for val in pred])
         y_true=np.array([int(v["label"]) for k,v in test_data])
         all_idx.extend(test_idx)
@@ -439,10 +585,18 @@ def run_cv_train(config,logger,device,prefix="",enable_train=False, previous_n_s
         print("AUC:",aucs)
         fold+=1
     #print("===")
+    result={}
+    result["acc_list"]=acc_list
     print("Accuracy (mean):",np.mean(acc_list))
+    result["acc_mean"]=np.mean(acc_list)
     print("Accuracy (std.):",np.std(acc_list))
+    result["acc_std"]=np.std(acc_list)
+    
+    result["auc_list"]=auc_list
     print("ROC-AUC (mean):",np.mean(np.array(auc_list),axis=0))
+    result["auc_mean"]=np.mean(auc_list)
     print("ROC-AUC (std.):",np.std(np.array(auc_list),axis=0))
+    result["auc_std"]=np.mean(auc_list)
     print(conf_mat)
     all_true_=np.array(all_true)
     all_prob_=np.array(all_prob)
@@ -450,7 +604,9 @@ def run_cv_train(config,logger,device,prefix="",enable_train=False, previous_n_s
     acc=accuracy_score(all_true_,all_pred_)
     aucs=[roc_auc_score(all_true_==i,all_prob_[:,i]) for i in range(n_label)]
     print("Accuracy(all):",acc)
+    result["acc_all"]=acc
     print("ROC-AUC(all):",aucs)
+    result["auc_all"]=aucs
     
     fig=plt.figure()
     plt.plot([0, 1], [0, 1], 'k--')
@@ -471,13 +627,14 @@ def run_cv_train(config,logger,device,prefix="",enable_train=False, previous_n_s
         print(all_true[i],all_pred[i])
         print(all_att[i].shape)
     """
-    result={}
+    """
     result_data={}
     ### make conf mat
     for k,v in sorted(zip(all_idx,all_pred)):
         #print(data[k],int(k),int(v))
         result_data[int(k)]=int(v)
     result["result_data"]=result_data
+    """
     key_list=[]
     for k,v in conf_mat.items():
         key_list.append(k[0])
@@ -493,6 +650,7 @@ def run_cv_train(config,logger,device,prefix="",enable_train=False, previous_n_s
             else:
                 l.append(0)
         ll.append(l)
+    result["conf_mat"]=ll
     result["conf_mat"]=ll
 
     result_all_data={}
@@ -523,14 +681,30 @@ if __name__ == '__main__':
                         help='config json file')
     parser.add_argument('--data', type=str, default="./ROP_1h_28w/rop_data_npy/dataset.json",
                         help='data json file')
+    parser.add_argument(
+        "--cpu", action="store_true", help="cpu mode (calcuration only with cpu)"
+    )
+    parser.add_argument(
+        "--gpu",
+        type=str,
+        default=None,
+        help="constraint gpus (default: all) (e.g. --gpu 0,2)",
+    )
+
 
     args = parser.parse_args()
+    if args.cpu:
+        os.environ["CUDA_VISIBLE_DEVICES"] = ""
+    elif args.gpu is not None:
+        os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
+
     config=get_default_config()
     config.update(json.load(open(args.config)))
     config["data"]=args.data
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger("logger")
     set_file_logger(logger,config,"log.txt")
+
 
     if torch.cuda.is_available():
         device = 'cuda'
@@ -540,9 +714,9 @@ if __name__ == '__main__':
         print("device: cpu")
 
     if args.mode=="train":
-        run_cv_train(config, logger, device, enable_train=True)
+        run_cv_train(config, logger, device, enable_train=True, external_test=False)
     elif args.mode=="test":
-        run_cv_train(config, logger, device, enable_train=False)
+        run_cv_train(config, logger, device, enable_train=False, external_test=False)
     elif args.mode=="train_prev_all":
         run_prev_all(config,logger,device,enable_train=True)
     elif args.mode=="test_prev_all":
@@ -551,6 +725,10 @@ if __name__ == '__main__':
         run_after_all(config,logger,device,enable_train=True)
     elif args.mode=="test_after_all":
         run_after_all(config,logger,device,enable_train=False)
+    elif args.mode=="train_test_after":
+        run_after_all(config,logger,device,enable_train=True,train_test_mode=True)
+    elif args.mode=="train_test_prev":
+        run_prev_all(config,logger,device,enable_train=True,train_test_mode=True)
     else:
         print("unknown")
 
