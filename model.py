@@ -139,6 +139,9 @@ class SeqClassifier:
 
     def _compute_batch_loss(self, batch, epoch):
         obs, lengths, ys = batch
+        #batch=[el.to(self.device) for el in batch]
+        obs=obs.to(self.device)
+        ys=ys.to(self.device)
         metrics = {}
         att=None
         ###
@@ -213,7 +216,6 @@ class SeqClassifier:
         all_prob=[]
         all_att=[]
         for i, batch in enumerate(testloader, 0):
-            batch=[el.to(self.device) for el in batch]
             loss, loss_dict, pred, out, att = self._compute_batch_loss(batch,0)
             test_loss_logger.update(loss, loss_dict)
             all_pred.append(pred.detach().to('cpu').numpy())
@@ -261,7 +263,6 @@ class SeqClassifier:
             valid_loss_logger.start_epoch()
             for i, batch in enumerate(trainloader, 0):
                 optimizer.zero_grad()
-                batch=[el.to(self.device) for el in batch]
                 loss, loss_dict, _ , _ , _ = self._compute_batch_loss(batch,epoch)
                 train_loss_logger.update(loss, loss_dict)
                 loss.backward()
@@ -270,7 +271,6 @@ class SeqClassifier:
                 del loss_dict
 
             for i, batch in enumerate(validloader, 0):
-                batch=[el.to(self.device) for el in batch]
                 loss, loss_dict, _ , _ , _ = self._compute_batch_loss(batch,epoch)
                 valid_loss_logger.update(loss, loss_dict)
             train_loss_logger.end_epoch()
@@ -384,8 +384,6 @@ def run_after_all(config,logger,device,enable_train=False,train_test_mode=False)
 
 def run_train_test(config,logger,device,prefix="",enable_train=False, previous_n_step=None, after_n_step=None):
     att_mode=True
-    enable_train=False
-    
 
     data=load_dataset(config["data"],config)
     data=np.array(data)
@@ -664,7 +662,7 @@ def run_cv_train(config,logger,device,prefix="",enable_train=False, previous_n_s
     result["all"]=result_all_data
    
     ###
-    path=result_path+"/"+prefix+"result.json"
+    path=result_path+"/"+prefix+"result_cv.json"
     print("[SAVE]",path)
     with open(path,"w") as fp:
         json.dump(result,fp)
@@ -717,18 +715,22 @@ if __name__ == '__main__':
         run_cv_train(config, logger, device, enable_train=True, external_test=False)
     elif args.mode=="test":
         run_cv_train(config, logger, device, enable_train=False, external_test=False)
-    elif args.mode=="train_prev_all":
+    elif args.mode=="cv_prev" or args.mode=="train_prev_all":
         run_prev_all(config,logger,device,enable_train=True)
-    elif args.mode=="test_prev_all":
+    elif args.mode=="cv_prev_test" or args.mode=="test_prev_all":
         run_prev_all(config,logger,device,enable_train=False)
-    elif args.mode=="train_after_all":
+    elif args.mode=="cv_after" or args.mode=="train_after_all":
         run_after_all(config,logger,device,enable_train=True)
-    elif args.mode=="test_after_all":
+    elif args.mode=="cv_after_test" or args.mode=="test_after_all":
         run_after_all(config,logger,device,enable_train=False)
-    elif args.mode=="train_test_after":
+    elif args.mode=="train_after" or args.mode=="train_test_after":
         run_after_all(config,logger,device,enable_train=True,train_test_mode=True)
-    elif args.mode=="train_test_prev":
+    elif args.mode=="train_prev" or args.mode=="train_test_prev":
         run_prev_all(config,logger,device,enable_train=True,train_test_mode=True)
+    elif args.mode=="test_after":
+        run_after_all(config,logger,device,enable_train=False,train_test_mode=True)
+    elif args.mode=="test_prev":
+        run_prev_all(config,logger,device,enable_train=False,train_test_mode=True)
     else:
         print("unknown")
 

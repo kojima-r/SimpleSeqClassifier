@@ -1,0 +1,9 @@
+{
+        "epoch":300,
+        "learning_rate":0.001,
+        "batch_size":64,
+        "nn_type":"lstm3",
+        "result_base_path":"result_base_ex/",
+        "result_original_path":"result_base/"
+}
+
