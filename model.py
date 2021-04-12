@@ -679,6 +679,8 @@ if __name__ == '__main__':
                         help='config json file')
     parser.add_argument('--data', type=str, default="./ROP_1h_28w/rop_data_npy/dataset.json",
                         help='data json file')
+    parser.add_argument('--test_data', type=str, default="./ROP_1h_ych_28w/rop_data_npy/dataset.json",
+                        help='data json file')
     parser.add_argument(
         "--cpu", action="store_true", help="cpu mode (calcuration only with cpu)"
     )
@@ -699,6 +701,7 @@ if __name__ == '__main__':
     config=get_default_config()
     config.update(json.load(open(args.config)))
     config["data"]=args.data
+    config["test_data"]=args.test_data
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger("logger")
     set_file_logger(logger,config,"log.txt")
