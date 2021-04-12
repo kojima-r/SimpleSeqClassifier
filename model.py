@@ -498,7 +498,7 @@ def run_train_test(config,logger,device,prefix="",enable_train=False, previous_n
 
 def run_cv_train(config,logger,device,prefix="",enable_train=False, previous_n_step=None, after_n_step=None,external_test=False):
     att_mode=True
-    
+    external_test=True
 
     data=load_dataset(config["data"],config)
     data=np.array(data)
@@ -652,14 +652,28 @@ def run_cv_train(config,logger,device,prefix="",enable_train=False, previous_n_s
     result["conf_mat"]=ll
 
     result_all_data={}
-    for i in range(len(all_idx)):
-        pair=data[all_idx[i]]
-        result_all_data[pair[0]]=pair[1]
-        result_all_data[pair[0]]["y_pred"]=int(all_pred[i])
-        result_all_data[pair[0]]["y_true"]=int(all_true[i])
-        result_all_data[pair[0]]["y_prob"]=all_prob[i].tolist()
-        result_all_data[pair[0]]["attention"]=all_att[i].tolist()
-    result["all"]=result_all_data
+    if external_test:
+        print("out data_num:",len(data))
+        print("out pred data_num:",len(all_pred))
+        for i in range(len(data)):
+            pair=data[i]
+            result_all_data[pair[0]]=pair[1]
+            result_all_data[pair[0]]["y_pred"]=int(all_pred[i])
+            result_all_data[pair[0]]["y_true"]=int(all_true[i])
+            result_all_data[pair[0]]["y_prob"]=all_prob[i].tolist()
+            result_all_data[pair[0]]["attention"]=all_att[i].tolist()
+        result["all"]=result_all_data
+   
+    else:
+        print("out data_num:",len(all_idx))
+        for i in range(len(all_idx)):
+            pair=data[all_idx[i]]
+            result_all_data[pair[0]]=pair[1]
+            result_all_data[pair[0]]["y_pred"]=int(all_pred[i])
+            result_all_data[pair[0]]["y_true"]=int(all_true[i])
+            result_all_data[pair[0]]["y_prob"]=all_prob[i].tolist()
+            result_all_data[pair[0]]["attention"]=all_att[i].tolist()
+        result["all"]=result_all_data
    
     ###
     path=result_path+"/"+prefix+"result_cv.json"
